@@ -1,0 +1,7 @@
+target/
+.idea/
+*.iml
+.env
+ui/node_modules/
+ui/dist/
+ui/*.tsbuildinfo

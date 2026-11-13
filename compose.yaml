@@ -1,0 +1,51 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server","--appendonly","yes"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 3s
+      retries: 20
+  kafka:
+    image: apache/kafka:3.9.1
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    volumes: ["kafka-data:/var/lib/kafka/data"]
+    healthcheck:
+      test: ["CMD-SHELL","/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 5s
+      retries: 30
+  topics:
+    image: apache/kafka:3.9.1
+    depends_on:
+      kafka: {condition: service_healthy}
+    entrypoint: ["/bin/sh","-c"]
+    command: ["for t in saga.commands saga.results saga.results.dlt; do /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic $$t --partitions 3 --replication-factor 1 || exit 1; done"]
+  app:
+    build: .
+    environment:
+      REDIS_HOST: redis
+      KAFKA_BOOTSTRAP: kafka:9092
+      SAGA_API_KEY: ${SAGA_API_KEY:?Set SAGA_API_KEY to a random string of at least 24 characters}
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      redis: {condition: service_healthy}
+      topics: {condition: service_completed_successfully}
+  console:
+    build: ./ui
+    ports: ["127.0.0.1:8081:80"]
+    depends_on: [app]
+volumes:
+  redis-data:
+  kafka-data:

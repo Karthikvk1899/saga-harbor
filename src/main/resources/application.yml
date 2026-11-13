@@ -1,0 +1,33 @@
+server:
+  port: 8080
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    consumer:
+      group-id: saga-harbor-v1
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+    listener:
+      ack-mode: manual_immediate
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+app:
+  api-key: ${SAGA_API_KEY:}
+  commands-topic: ${COMMANDS_TOPIC:saga.commands}
+  results-topic: ${RESULTS_TOPIC:saga.results}
+  outbox-capacity: ${OUTBOX_CAPACITY:10000}
