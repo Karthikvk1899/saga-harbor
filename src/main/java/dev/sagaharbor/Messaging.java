@@ -1,6 +1,7 @@
 package dev.sagaharbor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Value;
@@ -55,6 +56,10 @@ public class Messaging {
         Workflow.Result result;
         try {
             if (record.value() == null || record.value().length() > 8192) throw new IllegalArgumentException("invalid result size");
+            JsonNode envelope = json.readTree(record.value());
+            if (envelope == null || !envelope.isObject() || !envelope.path("schemaVersion").isIntegralNumber()
+                    || !envelope.path("sagaId").isTextual() || !envelope.path("commandId").isTextual()
+                    || !envelope.path("success").isBoolean()) throw new IllegalArgumentException("invalid field type");
             result = json.readValue(record.value(), Workflow.Result.class);
             if (result.schemaVersion() != 1 || result.sagaId() == null || result.commandId() == null
                     || result.success() == null || !result.sagaId().equals(record.key())) throw new IllegalArgumentException("invalid envelope");
