@@ -46,13 +46,14 @@ The response contains the saga UUID. Query it with `GET /api/v1/sagas/{uuid}` an
 
 The `POST /api/v1/sagas` body has one `orderId`: 1–128 ASCII letters, digits, `_ . : -` (without spaces). `Idempotency-Key` is a UUID. Retrying the same key and order returns the same saga ID (200); a different order with that key returns 409. Creation returns 201. Missing/invalid authorization returns 401 for valid requests; the key is required at startup and must be at least 24 characters. The API returns 503 when the bounded outbox is full. State and idempotency mappings are retained indefinitely in this reference implementation.
 
-`saga.commands` contains JSON `{schemaVersion:1,eventId,sagaId,orderId,commandId,action}` keyed by `sagaId`. Actions are `RESERVE`, `CHARGE`, `RELEASE`. Workers publish JSON `{schemaVersion:1,sagaId,commandId,success}` to `saga.results`, also keyed by `sagaId`. `success` must be a JSON boolean. Unknown saga IDs and malformed envelopes go to `saga.results.dlt` before input offsets are acknowledged. Results with stale command IDs are ignored as duplicates; the current expected command ID is visible through the API. The three topics are created with three partitions in Compose.
+`saga.commands` contains JSON `{schemaVersion:1,eventId,sagaId,orderId,commandId,action}` keyed by `sagaId`. Actions are `RESERVE`, `CHARGE`, `RELEASE`. Workers publish JSON `{schemaVersion:1,sagaId,commandId,success}` to `saga.results`, also keyed by `sagaId`. `success` must be a JSON boolean; result values above 8 KiB are rejected. Unknown saga IDs and malformed envelopes go to `saga.results.dlt` before input offsets are acknowledged. Results with stale command IDs are ignored as duplicates; the current expected command ID is visible through the API. `createdAtMs` and `updatedAtMs` use Redis server time for operator age indicators. The three topics are created with three partitions in Compose.
 
 ## Consistency and failure model
 
 - Lua scripts atomically update a saga and enqueue the next command in Redis. Concurrent duplicate results advance only once. Redis is the durable source of coordinator state; AOF is enabled locally, but a primary failure can still lose acknowledged writes.
 - The relay leases an outbox entry for 30 seconds, waits for Kafka acknowledgement, then deletes it. A crash after Kafka acknowledgement can emit a duplicate on lease expiry. Consumers **must** deduplicate by `commandId`; each side effect needs its own idempotency store.
 - A full outbox rejects creation or a transition that needs to emit a command without altering state. The Kafka consumer retries that record when capacity returns. Redis errors fail closed. There is no distributed transaction between Redis and Kafka.
+- Transient consumer failures retry indefinitely at a fixed interval; a persistent failure blocks that partition and requires an operator response. Invalid envelopes are acknowledged only after the dead letter topic confirms receipt. Prometheus exposes outcome counters with bounded action/outcome labels.
 - This implementation does not automatically time out uncertain payment or inventory outcomes. Late successes and compensations can create financial risk. Alert on aging sagas and use a documented manual decision process with downstream facts before recovery.
 - Outbox count is bounded by `OUTBOX_CAPACITY` (default 10,000), while saga and idempotency records are not. Size Redis memory and implement a retention/archive process for real deployments. One Redis primary is assumed; these scripts touch multiple keys and are not Redis Cluster compatible.
 
@@ -65,7 +66,7 @@ mvn verify                  # Java 21, Maven 3.9+, Docker for Testcontainers
 cd ui && npm ci && npm test && npm run build
 ```
 
-`WorkflowIT` uses real Redis under Testcontainers to exercise idempotent creation, normal and compensating transitions, concurrent duplicate results, and outbox saturation. GitHub Actions also builds the images and drives Kafka through Compose with `scripts/e2e.sh`. Docker was not available in the initial authoring workspace; consult the actual CI result before relying on integration coverage. No capacity, cloud, or live worker claim is implied.
+`WorkflowIT` uses real Redis under Testcontainers to exercise idempotent creation under concurrency, normal and compensating transitions, concurrent duplicate results, outbox saturation, and lease reclaim. GitHub Actions also builds the images and drives Kafka through Compose with `scripts/e2e.sh`, covering compensation, stale replay, malformed-result dead letter, restart, and success. No capacity, cloud, or live worker claim is implied.
 
 ## Contributing and license
 

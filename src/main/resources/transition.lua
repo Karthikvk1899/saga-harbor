@@ -13,8 +13,10 @@ elseif state == 'RELEASING' then
   if ARGV[2] == '1' then nextState = 'COMPENSATED' else nextState = 'MANUAL_REVIEW' end
 else return {0, state} end
 if nextAction and redis.call('HLEN', KEYS[2]) >= tonumber(ARGV[6]) then return {-2, 'outbox_full'} end
+local time = redis.call('TIME')
+local now = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
 redis.call('HINCRBY', KEYS[1], 'version', 1)
-redis.call('HSET', KEYS[1], 'state', nextState, 'commandId', nextAction and ARGV[3] or '')
+redis.call('HSET', KEYS[1], 'state', nextState, 'commandId', nextAction and ARGV[3] or '', 'updatedAtMs', now)
 if nextAction then
   redis.call('HSET', KEYS[2], ARGV[4], ARGV[5])
   redis.call('RPUSH', KEYS[3], ARGV[4])

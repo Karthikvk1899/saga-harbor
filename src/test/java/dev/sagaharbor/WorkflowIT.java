@@ -43,6 +43,8 @@ class WorkflowIT {
         String charge = (String) workflow.get(first.id()).get("commandId");
         assertEquals("COMPLETED", workflow.accept(new Workflow.Result(1, first.id(), charge, true)).state());
         assertEquals("3", workflow.get(first.id()).get("version"));
+        assertNotNull(workflow.get(first.id()).get("createdAtMs"));
+        assertTrue(Long.parseLong((String)workflow.get(first.id()).get("updatedAtMs")) >= Long.parseLong((String)workflow.get(first.id()).get("createdAtMs")));
     }
     @Test void chargeFailureCompensatesAndReleaseFailureRequiresReview() {
         Workflow.Started started = workflow.begin("order-3", UUID.randomUUID());
@@ -72,5 +74,33 @@ class WorkflowIT {
         String reserve = (String)small.get(started.id()).get("commandId");
         assertThrows(Workflow.OutboxFull.class, () -> small.accept(new Workflow.Result(1, started.id(), reserve, true)));
         assertEquals("RESERVING", small.get(started.id()).get("state"));
+    }
+    @Test void reservationFailureIsTerminalAndReplayIsIgnored() {
+        var started = workflow.begin("order-7", UUID.randomUUID());
+        String reserve = (String)workflow.get(started.id()).get("commandId");
+        assertEquals("FAILED", workflow.accept(new Workflow.Result(1, started.id(), reserve, false)).state());
+        assertFalse(workflow.accept(new Workflow.Result(1, started.id(), reserve, true)).applied());
+        assertEquals(1L, redis.opsForHash().size("outbox:payload"));
+    }
+    @Test void concurrentIdempotentCreationReturnsOneSaga() throws Exception {
+        UUID key = UUID.randomUUID();
+        try (var pool = Executors.newFixedThreadPool(10)) {
+            var futures = java.util.stream.IntStream.range(0, 20).mapToObj(i -> pool.submit(() -> workflow.begin("same-order", key))).toList();
+            String id = futures.get(0).get(10, TimeUnit.SECONDS).id();
+            for (var future : futures) assertEquals(id, future.get(10, TimeUnit.SECONDS).id());
+        }
+        assertEquals(1L, redis.opsForHash().size("outbox:payload"));
+    }
+    @Test void leasedCommandCanBeReclaimedAfterExpiry() {
+        workflow.begin("order-8", UUID.randomUUID());
+        var claim = Workflow.script("claim.lua");
+        var keys = java.util.List.of("outbox:payload", "outbox:ready", "outbox:leases");
+        java.util.List<?> first = redis.execute(claim, keys, "1000", "30000");
+        assertNotNull(first);
+        assertNull(redis.execute(claim, keys, "1001", "30000"));
+        java.util.List<?> reclaimed = redis.execute(claim, keys, "31000", "30000");
+        assertNotNull(reclaimed);
+        assertEquals(first.get(0), reclaimed.get(0));
+        assertEquals(first.get(1), reclaimed.get(1));
     }
 }

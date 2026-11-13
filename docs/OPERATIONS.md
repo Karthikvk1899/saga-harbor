@@ -2,7 +2,7 @@
 
 ## Monitoring
 
-Scrape `/actuator/prometheus` only on a private network. Alert on Kafka consumer lag, outbox hash length (`HLEN outbox:payload`), stale leases (`ZRANGE outbox:leases 0 -1 WITHSCORES`), Redis memory and persistence errors, and sagas stuck in `RESERVING`, `CHARGING`, `RELEASING`, or `MANUAL_REVIEW`. The API exposes no scan endpoint; build an indexed operational view before production use.
+Scrape `/actuator/prometheus` only on a private network. Monitor `saga_commands_published_total` and `saga_results_total` without identifiers as labels. Alert on Kafka consumer lag, outbox hash length (`HLEN outbox:payload`), stale leases (`ZRANGE outbox:leases 0 -1 WITHSCORES`), Redis memory and persistence errors, and sagas stuck in `RESERVING`, `CHARGING`, `RELEASING`, or `MANUAL_REVIEW`. Each saga records `updatedAtMs` in Redis server time. The API exposes no scan endpoint; build an indexed operational view before production use.
 
 ## Recovery
 

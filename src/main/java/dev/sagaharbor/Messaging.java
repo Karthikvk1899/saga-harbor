@@ -1,9 +1,9 @@
 package dev.sagaharbor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -12,7 +12,6 @@ import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -24,12 +23,13 @@ public class Messaging {
     private final KafkaTemplate<String,String> kafka;
     private final ObjectMapper json;
     private final String commands;
+    private final MeterRegistry meters;
     private final DefaultRedisScript<List> claim = Workflow.script("claim.lua");
     private final DefaultRedisScript<Long> ackScript;
 
-    Messaging(Workflow workflow, StringRedisTemplate redis, KafkaTemplate<String,String> kafka, ObjectMapper json,
+    Messaging(Workflow workflow, StringRedisTemplate redis, KafkaTemplate<String,String> kafka, ObjectMapper json, MeterRegistry meters,
             @Value("${app.commands-topic}") String commands) {
-        this.workflow = workflow; this.redis = redis; this.kafka = kafka; this.json = json; this.commands = commands;
+        this.workflow = workflow; this.redis = redis; this.kafka = kafka; this.json = json; this.meters = meters; this.commands = commands;
         ackScript = new DefaultRedisScript<>();
         ackScript.setScriptText("redis.call('ZREM', KEYS[2], ARGV[1]); return redis.call('HDEL', KEYS[1], ARGV[1])");
         ackScript.setResultType(Long.class);
@@ -44,6 +44,7 @@ public class Messaging {
             Workflow.Command command = json.readValue(payload, Workflow.Command.class);
             kafka.send(commands, command.sagaId(), payload).get(20, TimeUnit.SECONDS);
             redis.execute(ackScript, List.of("outbox:payload", "outbox:leases"), id);
+            meters.counter("saga_commands_published_total", "action", command.action()).increment();
         } catch (Exception e) {
             // Lease expires and another relay can retry. Never acknowledge before Kafka confirms.
             throw new IllegalStateException("outbox relay failed for " + id, e);
@@ -53,6 +54,7 @@ public class Messaging {
     void result(ConsumerRecord<String,String> record, Acknowledgment acknowledgment) throws Exception {
         Workflow.Result result;
         try {
+            if (record.value() == null || record.value().length() > 8192) throw new IllegalArgumentException("invalid result size");
             result = json.readValue(record.value(), Workflow.Result.class);
             if (result.schemaVersion() != 1 || result.sagaId() == null || result.commandId() == null
                     || result.success() == null || !result.sagaId().equals(record.key())) throw new IllegalArgumentException("invalid envelope");
@@ -60,11 +62,16 @@ public class Messaging {
         } catch (Exception invalid) {
             // Invalid records are not silently discarded. Configure DLT topic before starting.
             kafka.send("saga.results.dlt", record.key(), record.value()).get(20, TimeUnit.SECONDS);
+            meters.counter("saga_results_total", "outcome", "invalid").increment();
             acknowledgment.acknowledge(); return;
         }
-        try { workflow.accept(result); }
+        try {
+            Workflow.Outcome outcome = workflow.accept(result);
+            meters.counter("saga_results_total", "outcome", outcome.applied() ? "applied" : "stale").increment();
+        }
         catch (IllegalArgumentException unknown) {
             kafka.send("saga.results.dlt", record.key(), record.value()).get(20, TimeUnit.SECONDS);
+            meters.counter("saga_results_total", "outcome", "unknown").increment();
         }
         acknowledgment.acknowledge();
     }
