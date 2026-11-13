@@ -14,11 +14,11 @@ jobs:
           base64 -d source.b64 > /tmp/source.zip
           unzip -t /tmp/source.zip
           unzip -oq /tmp/source.zip -d .
-          rm source.b64 .github/workflows/bootstrap.yml
+          rm source.b64 .github/workflows/ci.yml
       - name: Commit project files
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'Import Saga Harbor source and CI'
+          git commit -m 'Import Saga Harbor application source'
           git push
