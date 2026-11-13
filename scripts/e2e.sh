@@ -3,6 +3,8 @@ set -euo pipefail
 : "${SAGA_API_KEY:?Set SAGA_API_KEY}"
 base=http://localhost:8080
 for i in {1..60}; do if curl -fsS "$base/actuator/health" | grep -q 'UP'; then break; fi; sleep 2; done
+console=$(curl -fsS http://localhost:8081/)
+grep -q 'Saga Harbor' <<<"$console"
 idempotency=$(cat /proc/sys/kernel/random/uuid)
 created=$(curl -fsS -X POST "$base/api/v1/sagas" -H "Authorization: Bearer $SAGA_API_KEY" -H "Idempotency-Key: $idempotency" -H 'Content-Type: application/json' -d '{"orderId":"smoke-order"}')
 saga_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$created")
@@ -58,8 +60,10 @@ publish "$reserve_command" true
 sleep 2
 test "$(get | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" = 4
 printf '%s:%s\n' "$saga_id" 'invalid-result-smoke' | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka:9092 --topic saga.results --property parse.key=true --property key.separator=: >/dev/null
+printf '%s:%s\n' "$saga_id" "{\"schemaVersion\":1,\"sagaId\":\"$saga_id\",\"commandId\":\"$reserve_command\",\"success\":\"true\"}" | docker compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka:9092 --topic saga.results --property parse.key=true --property key.separator=: >/dev/null
 dlt=$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic saga.results.dlt --from-beginning --timeout-ms 10000 2>/dev/null || true)
 grep -q 'invalid-result-smoke' <<<"$dlt"
+grep -q '"success":"true"' <<<"$dlt"
 echo 'Verified stale-result replay and malformed-result dead letter'
 docker compose restart app
 for i in {1..45}; do if curl -fsS "$base/actuator/health" 2>/dev/null | grep -q 'UP'; then break; fi; sleep 2; done
@@ -73,4 +77,5 @@ await_state COMPLETED
 metrics=$(curl -fsS "$base/actuator/prometheus")
 grep -q 'saga_results_total' <<<"$metrics"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/v1/sagas/$saga_id")" = 401
+test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/v1/sagas/"$saga_id" -H "Authorization: Bearer $SAGA_API_KEY")" = 200
 echo "Verified compensation, dead letter, duplicate replay, and post-restart completion"
