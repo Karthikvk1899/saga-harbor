@@ -5,6 +5,9 @@ base=http://localhost:8080
 for i in {1..60}; do if curl -fsS "$base/actuator/health" | grep -q 'UP'; then break; fi; sleep 2; done
 console=$(curl -fsS http://localhost:8081/)
 grep -q 'Saga Harbor' <<<"$console"
+curl -fsSI http://localhost:8081/ | grep -qi 'content-security-policy:'
+test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/v1/sagas/11111111-1111-4111-8111-111111111111" -H 'Authorization: Bearer wrong')" = 401
+test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$base/api/v1/sagas" -H "Authorization: Bearer $SAGA_API_KEY" -H 'Content-Type: application/json' -d '{"orderId":"invalid id"}')" = 400
 idempotency=$(cat /proc/sys/kernel/random/uuid)
 created=$(curl -fsS -X POST "$base/api/v1/sagas" -H "Authorization: Bearer $SAGA_API_KEY" -H "Idempotency-Key: $idempotency" -H 'Content-Type: application/json' -d '{"orderId":"smoke-order"}')
 saga_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$created")
@@ -78,4 +81,27 @@ metrics=$(curl -fsS "$base/actuator/prometheus")
 grep -q 'saga_results_total' <<<"$metrics"
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/v1/sagas/$saga_id")" = 401
 test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/v1/sagas/"$saga_id" -H "Authorization: Bearer $SAGA_API_KEY")" = 200
-echo "Verified compensation, dead letter, duplicate replay, and post-restart completion"
+echo 'Testing Kafka outage and outbox recovery'
+docker compose stop kafka
+saga_id=$(curl -fsS -X POST "$base/api/v1/sagas" -H "Authorization: Bearer $SAGA_API_KEY" -H "Idempotency-Key: $(cat /proc/sys/kernel/random/uuid)" -H 'Content-Type: application/json' -d '{"orderId":"kafka-outage-order"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+outage_command=$(get | python3 -c 'import json,sys; print(json.load(sys.stdin)["commandId"])')
+test "$(docker compose exec -T redis redis-cli HLEN outbox:payload)" -ge 1
+docker compose start kafka
+found=0
+for i in {1..10}; do
+  messages=$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic saga.commands --from-beginning --timeout-ms 10000 2>/dev/null || true)
+  if grep -q "$outage_command" <<<"$messages"; then found=1; break; fi
+  sleep 2
+done
+test "$found" = 1
+echo 'Verified Kafka outage recovery from Redis outbox'
+echo 'Testing Redis outage and idempotent retry'
+retry_key=$(cat /proc/sys/kernel/random/uuid)
+docker compose stop redis
+status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 4 -X POST "$base/api/v1/sagas" -H "Authorization: Bearer $SAGA_API_KEY" -H "Idempotency-Key: $retry_key" -H 'Content-Type: application/json' -d '{"orderId":"redis-outage-order"}' || true)
+test "$status" != 201
+docker compose start redis
+for i in {1..45}; do if curl -fsS "$base/actuator/health" 2>/dev/null | grep -q 'UP'; then break; fi; sleep 2; done
+retry=$(curl -fsS -X POST "$base/api/v1/sagas" -H "Authorization: Bearer $SAGA_API_KEY" -H "Idempotency-Key: $retry_key" -H 'Content-Type: application/json' -d '{"orderId":"redis-outage-order"}')
+test -n "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$retry")"
+echo "Verified compensation, dead letter, duplicate replay, restart, Kafka recovery, and Redis retry"

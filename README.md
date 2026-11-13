@@ -44,6 +44,8 @@ The response contains the saga UUID. Query it with `GET /api/v1/sagas/{uuid}` an
 
 The machine-readable HTTP contract is in [OpenAPI](docs/openapi.yaml). The Kafka result envelope is validated for exact JSON field types before it can change state.
 
+For an identity-aware deployment set `APP_MODE=production`, `OIDC_ISSUER`, `OIDC_AUDIENCE`, and `OIDC_JWKS_URI`; see [security](SECURITY.md). This requires an external HTTPS identity provider and a trusted ingress. The included console is a localhost demo using the shared key and does not provide OIDC sign-in.
+
 ## Contracts
 
 The `POST /api/v1/sagas` body has one `orderId`: 1–128 ASCII letters, digits, `_ . : -` (without spaces). `Idempotency-Key` is a UUID. Retrying the same key and order returns the same saga ID (200); a different order with that key returns 409. Creation returns 201. Missing/invalid authorization returns 401 for valid requests; the key is required at startup and must be at least 24 characters. The API returns 503 when the bounded outbox is full. State and idempotency mappings are retained indefinitely in this reference implementation.
@@ -69,6 +71,8 @@ cd ui && npm ci && npm test && npm run build
 ```
 
 `WorkflowIT` uses real Redis under Testcontainers to exercise idempotent creation under concurrency, normal and compensating transitions, concurrent duplicate results, outbox saturation, and lease reclaim. GitHub Actions also builds the images and drives Kafka through Compose with `scripts/e2e.sh`, covering compensation, stale replay, malformed-result dead letter, restart, and success. No capacity, cloud, or live worker claim is implied.
+
+The CI workflow also runs production-mode authorization and JWT claim-validator tests, `npm audit --audit-level=high`, and `scripts/load.py --count 200 --workers 20`. The load command reports CI runner HTTP latency and accepted requests per second; it fails on any unsuccessful creation or duplicate ID. The Compose test exercises Kafka and Redis outages as well as the workflow paths above. CodeQL analyzes Java and TypeScript; dependency review gates new high-severity dependencies in pull requests. Its numbers are not a service-level objective or a production capacity test.
 
 ## Contributing and license
 

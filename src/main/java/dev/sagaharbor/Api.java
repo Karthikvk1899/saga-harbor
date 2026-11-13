@@ -18,12 +18,16 @@ import java.util.UUID;
 public class Api {
     private final Workflow workflow;
     private final byte[] key;
-    public Api(Workflow workflow, @Value("${app.api-key}") String key) {
-        if (key.isBlank() || key.length() < 24) throw new IllegalStateException("SAGA_API_KEY must be at least 24 characters");
+    private final boolean production;
+    public Api(Workflow workflow, @Value("${app.api-key}") String key, @Value("${app.mode:demo}") String mode) {
+        if (!mode.equals("demo") && !mode.equals("production")) throw new IllegalStateException("APP_MODE must be demo or production");
+        this.production = mode.equals("production");
+        if (!production && (key.isBlank() || key.length() < 24)) throw new IllegalStateException("SAGA_API_KEY must be at least 24 characters in demo mode");
         this.workflow = workflow; this.key = key.getBytes(StandardCharsets.UTF_8);
     }
     public record StartRequest(@NotBlank @Pattern(regexp="[A-Za-z0-9_.:-]{1,128}") String orderId) {}
     private void authorize(String bearer) {
+        if (production) return; // Production requests are authenticated and authorized in SecurityConfig.
         String provided = bearer != null && bearer.startsWith("Bearer ") ? bearer.substring(7) : "";
         if (!MessageDigest.isEqual(key, provided.getBytes(StandardCharsets.UTF_8))) throw new Unauthorized();
     }

@@ -27,6 +27,11 @@ management:
       exposure:
         include: health,prometheus
 app:
+  mode: ${APP_MODE:demo}
+  oidc:
+    issuer: ${OIDC_ISSUER:}
+    audience: ${OIDC_AUDIENCE:}
+    jwks-uri: ${OIDC_JWKS_URI:}
   api-key: ${SAGA_API_KEY:}
   commands-topic: ${COMMANDS_TOPIC:saga.commands}
   results-topic: ${RESULTS_TOPIC:saga.results}
