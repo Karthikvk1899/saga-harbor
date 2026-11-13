@@ -15,6 +15,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -38,14 +39,14 @@ class SecurityWebTest {
         mvc.perform(get("/api/v1/sagas/"+id).header("Authorization", "Bearer not-a-jwt")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/sagas/"+id).header("Authorization", "Bearer demo-key-ignored-in-production")).andExpect(status().isUnauthorized());
         mvc.perform(get("/api/v1/sagas/"+id).with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_saga:write")))).andExpect(status().isForbidden());
-        mvc.perform(post("/api/v1/sagas").with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_saga:read")))
+        mvc.perform(post("/api/v1/sagas").with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_saga:read"))).with(csrf())
                 .header("Idempotency-Key", id).contentType("application/json").content("{\"orderId\":\"order-1\"}"))
                 .andExpect(status().isForbidden());
         mvc.perform(get("/actuator/prometheus").with(jwt())).andExpect(status().isForbidden());
     }
     @Test void scopedTokensCanUseOnlyTheirRoute() throws Exception {
         mvc.perform(get("/api/v1/sagas/"+id).with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_saga:read")))).andExpect(status().isOk());
-        mvc.perform(post("/api/v1/sagas").with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_saga:write")))
+        mvc.perform(post("/api/v1/sagas").with(jwt().authorities(new SimpleGrantedAuthority("SCOPE_saga:write"))).with(csrf())
                 .header("Idempotency-Key", id).contentType("application/json").content("{\"orderId\":\"order-1\"}"))
                 .andExpect(status().isCreated());
     }
