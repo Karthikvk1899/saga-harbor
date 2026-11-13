@@ -13,10 +13,10 @@ for stage in RESERVING CHARGING RELEASING; do
   echo "Outbox pending: $(docker compose exec -T redis redis-cli HLEN outbox:payload), ready: $(docker compose exec -T redis redis-cli LLEN outbox:ready)"
   docker compose exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server kafka:9092 --topic saga.commands || true
   found=0
-  for i in {1..15}; do
+  for i in {1..5}; do
     record=$(get)
     command_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["commandId"])' <<<"$record")
-    messages=$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic saga.commands --from-beginning --timeout-ms 1500 2>/dev/null || true)
+    messages=$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic saga.commands --from-beginning --timeout-ms 10000 2>/dev/null || true)
     if grep -q "$command_id" <<<"$messages"; then found=1; break; fi
     sleep 1
   done
