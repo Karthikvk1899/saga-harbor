@@ -1,8 +1,7 @@
 name: Import source
 on:
   push:
-    paths:
-      - source.b64
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
