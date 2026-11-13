@@ -9,14 +9,16 @@ saga_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$c
 test "$(curl -fsS -X POST "$base/api/v1/sagas" -H "Authorization: Bearer $SAGA_API_KEY" -H "Idempotency-Key: $idempotency" -H 'Content-Type: application/json' -d '{"orderId":"smoke-order"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')" = "$saga_id"
 get() { curl -fsS "$base/api/v1/sagas/$saga_id" -H "Authorization: Bearer $SAGA_API_KEY"; }
 for stage in RESERVING CHARGING RELEASING; do
-  for i in {1..40}; do
+  echo "Waiting for $stage command for saga $saga_id"
+  found=0
+  for i in {1..15}; do
     record=$(get)
     command_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["commandId"])' <<<"$record")
     messages=$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic saga.commands --from-beginning --timeout-ms 1500 2>/dev/null || true)
-    if grep -q "$command_id" <<<"$messages"; then break; fi
+    if grep -q "$command_id" <<<"$messages"; then found=1; break; fi
     sleep 1
   done
-  test "$i" -lt 40
+  if [[ "$found" != 1 ]]; then echo "Command not observed: $command_id" >&2; exit 1; fi
   if [[ "$stage" == CHARGING ]]; then success=false; else success=true; fi
   payload=$(python3 - "$saga_id" "$command_id" "$success" <<'PY'
 import json,sys
@@ -27,12 +29,13 @@ PY
   expected=CHARGING
   [[ "$stage" == CHARGING ]] && expected=RELEASING
   [[ "$stage" == RELEASING ]] && expected=COMPENSATED
-  for j in {1..40}; do
+  for j in {1..20}; do
     actual=$(get | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
     [[ "$actual" == "$expected" ]] && break
     sleep 1
   done
-  test "$actual" = "$expected"
+  if [[ "$actual" != "$expected" ]]; then echo "Expected $expected, found $actual" >&2; exit 1; fi
+  echo "Observed $actual"
 done
 test "$(curl -s -o /dev/null -w '%{http_code}' "$base/api/v1/sagas/$saga_id")" = 401
 echo "Verified compensation workflow for $saga_id"
