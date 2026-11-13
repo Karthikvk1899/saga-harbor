@@ -42,6 +42,8 @@ curl -i http://localhost:8080/api/v1/sagas \
 
 The response contains the saga UUID. Query it with `GET /api/v1/sagas/{uuid}` and the same bearer token. A returned state is coordinator state, not proof of a downstream effect.
 
+The machine-readable HTTP contract is in [OpenAPI](docs/openapi.yaml). The Kafka result envelope is validated for exact JSON field types before it can change state.
+
 ## Contracts
 
 The `POST /api/v1/sagas` body has one `orderId`: 1–128 ASCII letters, digits, `_ . : -` (without spaces). `Idempotency-Key` is a UUID. Retrying the same key and order returns the same saga ID (200); a different order with that key returns 409. Creation returns 201. Missing/invalid authorization returns 401 for valid requests; the key is required at startup and must be at least 24 characters. The API returns 503 when the bounded outbox is full. State and idempotency mappings are retained indefinitely in this reference implementation.
