@@ -8,6 +8,8 @@
 
 The security web tests use synthetic JWT principals to verify route authorization and configuration rejection. They do **not** exercise a live identity provider or a full signed-token exchange. Do not claim that an IdP integration has been validated.
 
+Spring CSRF protection remains enabled for unsafe requests. The API exempts requests carrying an explicit `Authorization: Bearer ...` header; browser cross-origin requests cannot attach that header without CORS approval, which this service does not grant. The service does not authenticate with cookies or sessions.
+
 ## Network and data controls
 
 Terminate TLS at a trusted ingress, restrict ingress and egress, and enforce Kafka and Redis authentication/TLS plus Kafka producer ACLs. Restrict who may publish to `saga.results`: a result can authorize a state transition. Keep `/actuator/prometheus` on a separate private management surface if needed; production mode denies it on the API listener. Use secrets management and rotation for any credentials. The console sets a restrictive CSP and related response headers, but it is a demo interface and does not replace an identity-aware frontend. Do not put payment credentials or sensitive order data in commands; only opaque IDs are intended. Report vulnerabilities privately to the repository owner rather than opening a public issue with exploit details.
