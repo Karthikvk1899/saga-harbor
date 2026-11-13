@@ -6,6 +6,14 @@ on:
 permissions:
   contents: read
 jobs:
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
   java:
     runs-on: ubuntu-latest
     steps:
@@ -29,6 +37,7 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm test
       - run: npm run build
   compose:
@@ -43,6 +52,10 @@ jobs:
         env:
           SAGA_API_KEY: local-integration-key-long-enough-123
         run: bash scripts/e2e.sh
+      - name: Concurrent admission smoke
+        env:
+          SAGA_API_KEY: local-integration-key-long-enough-123
+        run: python3 scripts/load.py --count 200 --workers 20
       - name: Container logs
         if: failure()
         env:
