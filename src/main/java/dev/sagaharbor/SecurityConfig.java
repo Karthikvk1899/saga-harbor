@@ -10,24 +10,29 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.oauth2.core.*;
 import org.springframework.security.oauth2.jwt.*;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.util.matcher.RequestMatcher;
 
 import java.net.URI;
 import java.util.List;
 
 @Configuration
 class SecurityConfig {
+    private static final RequestMatcher BEARER_API = request -> {
+        String bearer = request.getHeader("Authorization");
+        return request.getRequestURI().startsWith("/api/v1/sagas") && bearer != null && bearer.startsWith("Bearer ");
+    };
     @Bean
     @ConditionalOnProperty(name="app.mode", havingValue="demo", matchIfMissing=true)
     SecurityFilterChain demoChain(HttpSecurity http) throws Exception {
         // The demo API performs its own bearer-key check; Compose binds both ports to loopback.
-        return http.csrf(csrf -> csrf.disable())
+        return http.csrf(csrf -> csrf.ignoringRequestMatchers(BEARER_API))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll()).build();
     }
     @Bean
     @ConditionalOnProperty(name="app.mode", havingValue="production")
     SecurityFilterChain productionChain(HttpSecurity http) throws Exception {
-        return http.csrf(csrf -> csrf.disable())
+        return http.csrf(csrf -> csrf.ignoringRequestMatchers(BEARER_API))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
