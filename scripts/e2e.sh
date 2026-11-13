@@ -10,6 +10,8 @@ test "$(curl -fsS -X POST "$base/api/v1/sagas" -H "Authorization: Bearer $SAGA_A
 get() { curl -fsS "$base/api/v1/sagas/$saga_id" -H "Authorization: Bearer $SAGA_API_KEY"; }
 for stage in RESERVING CHARGING RELEASING; do
   echo "Waiting for $stage command for saga $saga_id"
+  echo "Outbox pending: $(docker compose exec -T redis redis-cli HLEN outbox:payload), ready: $(docker compose exec -T redis redis-cli LLEN outbox:ready)"
+  docker compose exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server kafka:9092 --topic saga.commands || true
   found=0
   for i in {1..15}; do
     record=$(get)
@@ -18,7 +20,13 @@ for stage in RESERVING CHARGING RELEASING; do
     if grep -q "$command_id" <<<"$messages"; then found=1; break; fi
     sleep 1
   done
-  if [[ "$found" != 1 ]]; then echo "Command not observed: $command_id" >&2; exit 1; fi
+  if [[ "$found" != 1 ]]; then
+    echo "Command not observed: $command_id" >&2
+    docker compose exec -T redis redis-cli HLEN outbox:payload
+    docker compose exec -T redis redis-cli ZRANGE outbox:leases 0 -1 WITHSCORES
+    docker compose exec -T kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server kafka:9092 --topic saga.commands || true
+    exit 1
+  fi
   if [[ "$stage" == CHARGING ]]; then success=false; else success=true; fi
   payload=$(python3 - "$saga_id" "$command_id" "$success" <<'PY'
 import json,sys
